@@ -1,0 +1,7 @@
+notes
+__pycache__
+imgs
+yolov3.weights
+
+# data
+*.db3
