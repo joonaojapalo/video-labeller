@@ -1,11 +1,13 @@
 import sys
 import argparse
+from typing import Dict
+from matplotlib.lines import Line2D
 import matplotlib.pyplot as plt
 import json
 from BlittedCursor import BlittedCursor
 
 from ImageRepo import ImageRepo
-from SQLiteLabelRepo import SQLiteLabelRepo
+from SQLiteLabelRepo import Marker, SQLiteLabelRepo
 
 
 def scale(ax, scale, center_x, center_y, ref_height=1080):
@@ -16,6 +18,8 @@ def scale(ax, scale, center_x, center_y, ref_height=1080):
 
 class LabellerApp:
     is_drawing = False
+    landmark_color_current = "y"
+    landmark_color = "purple"
 
     def __init__(self,
                  image_repo: ImageRepo,
@@ -62,7 +66,7 @@ class LabellerApp:
         # bootstrap render
         self.load_markers()
         self.title = self.fig.suptitle(self._get_title())
-        self.marker_line = self._draw_initial_landmark_object()
+        self.landmark_artists = self._draw_initial_landmark_object()
         _cam_ids = self._current_cam_ids()
         self.ax1.set_xlabel(f"cam: {_cam_ids[0]}")
         self.ax2.set_xlabel(f"cam: {_cam_ids[1]}")
@@ -82,7 +86,7 @@ class LabellerApp:
     def _current_event_name(self):
         return self.event_names[self.i_event]
 
-    def _current_landmark(self):
+    def _current_landmark(self) -> str:
         return self.avail_landmarks[self.i_kp]
 
     def _rel_frames(self):
@@ -151,27 +155,56 @@ class LabellerApp:
         self._draw_frame()
         self.is_drawing = False
 
-    def _draw_initial_landmark_object(self):
-        obj = self._current_landmark_object()
-
+    def _draw_initial_object(self, obj, color):
         if obj:
-            return self.ax1.plot([obj["x"]], [obj["y"]], 'y+', markersize=10)[0]
+            return self.ax1.plot([obj["x"]], [obj["y"]], '+', color=color, markersize=10)[0]
         else:
             return self.ax1.plot([0, 0], 'y+', markersize=10)[0]
 
+    def _draw_initial_landmark_object(self) -> Dict[str, Line2D]:
+        curr_lm = self._current_landmark()
+        objs = self._current_frame_objects()
+        artists = {}
+
+        for lm in self.avail_landmarks:
+            obj = objs.get(lm)
+
+            # choose marker color
+            is_current = lm == curr_lm
+            color = self.landmark_color_current if is_current else self.landmark_color
+
+            # initial plot
+            artists[lm] = self._draw_initial_object(obj, color)
+
+        return artists
+
     def _draw_frame(self):
-        obj = self._current_landmark_object()
-        #print("_draw_frame", json.dumps(obj, indent=2))
+        current_lm = self._current_landmark()
+        objs = self._current_frame_objects()
+        print("_draw_frame", json.dumps(objs, indent=2))
 
         # render
         self.load_image(*self._get_image_paths())
         self.title.set_text(self._get_title())
 
-        if obj:
-            self.marker_line.set_data([obj["x"], obj["y"]])
-            self.marker_line.set_visible(True)
-        else:
-            self.marker_line.set_visible(False)
+        for artist in self.landmark_artists.values():
+            artist.set_visible(False)
+
+        for lm, obj in objs.items():
+            artist = self.landmark_artists.get(lm)
+
+            if not artist:
+                continue
+
+            artist.set_data([obj["x"], obj["y"]])
+            artist.set_visible(True)
+
+            # is selected landmark?
+            if lm == current_lm:
+                artist.set_color(self.landmark_color_current)
+            else:
+                artist.set_color(self.landmark_color)
+            print("Draw", lm)
 
         _cam_ids = self._current_cam_ids()
         self.ax1.set_xlabel(f"cam: {_cam_ids[0]}")
@@ -179,7 +212,9 @@ class LabellerApp:
 
         # update canvas
         self.fig.canvas.flush_events()
-        self.fig.draw_artist(self.marker_line)
+        for artist in self.landmark_artists.values():
+            self.fig.draw_artist(artist)
+
         self.fig.draw_artist(self.title)
         self.fig.draw_artist(self.im1)
         self.fig.draw_artist(self.im2)
@@ -197,27 +232,33 @@ class LabellerApp:
         if event.inaxes.figure.canvas.widgetlock.locked():
             return
 
-        # print('%s click: button=%d, x=%d, y=%d, xdata=%f, ydata=%f' %
-        #      ('double' if event.dblclick else 'single', event.button,
-        #       event.x, event.y, event.xdata, event.ydata))
         pane = self._which_ax(event)
         if event.button == 1 and pane == 0:
             self._set_marker(event.xdata, event.ydata)
 
-    def match_lm(self, other):
+    def match_landmark(self, other):
         current_landmark = self.avail_landmarks[self.i_kp]
-        current_cam_id = self._current_cam_id()
 
         cs = [
-            other["cam_id"] == current_cam_id,
             other["landmark"] == current_landmark,
+            other["cam_id"] == self._current_cam_id(),
             other["event"] == self._current_event_name(),
         ]
         return all(cs)
 
-    def _current_landmark_object(self):
-        matched = list(filter(self.match_lm, self.markers))
+    def match_frame(self, other):
+        cs = [
+            other["cam_id"] == self._current_cam_id(),
+            other["event"] == self._current_event_name(),
+        ]
+        return all(cs)
+
+    def _current_landmark_object(self) -> Marker:
+        matched = list(filter(self.match_landmark, self.markers))
         return matched[0] if matched else None
+
+    def _current_frame_objects(self) -> Dict[str, Marker]:
+        return dict((obj["landmark"], obj) for obj in self.markers if self.match_frame(obj))
 
     def _set_marker(self, x, y):
         # get existing point id
@@ -324,7 +365,8 @@ class LabellerApp:
         if i == limit:
             raise Exception("Next frame not found")
 
-        print(" * [next point] frame found", i_event, self.event_names[i_event], i_frame)
+        print(" * [next point] frame found", i_event,
+              self.event_names[i_event], i_frame)
         # update point...
 
         # 1) progress frame

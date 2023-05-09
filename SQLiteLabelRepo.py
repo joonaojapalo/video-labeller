@@ -1,5 +1,6 @@
 from pathlib import Path
 import sqlite3
+from typing import TypedDict, List
 
 schema = """
 CREATE TABLE landmarks (
@@ -16,7 +17,7 @@ CREATE TABLE cameras (
 
 INSERT INTO events VALUES
     ('rltd'),
-    ('bltd_first'),
+    ('bltd0'),
     ('bltd'),
     ('release');
 
@@ -89,6 +90,18 @@ WHERE
 
 query_select_landmarks = "select name from landmarks;"
 
+class Marker (TypedDict):
+    id: int
+    subject_id: str
+    trial_id: str
+    event: str
+    relative_frame: int
+    cam_id: str
+    landmark: str
+    x: float
+    y: float
+
+
 def dict_factory(cursor, row):
     d = {}
     for idx, col in enumerate(cursor.description):
@@ -122,12 +135,12 @@ class SQLiteLabelRepo:
 
         return conn
 
-    def get_available_landmarks(self):
+    def get_available_landmarks(self) -> List[str]:
         cur = self.conn.cursor()
         res = cur.execute(query_select_landmarks)
         return [row["name"] for row in res.fetchall()]
         
-    def get_frame(self, subject_id: str, trial_id: int, relative_frame: int):
+    def get_frame(self, subject_id: str, trial_id: int, relative_frame: int) -> List[Marker]:
         cur = self.conn.cursor()
         params = (
             subject_id,

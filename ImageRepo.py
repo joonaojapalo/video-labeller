@@ -66,7 +66,7 @@ class ImageRepo:
         """
         order = [
             "rltd",
-            "bltd_first",
+            "bltd0",
             "bltd",
             "release",
         ]
