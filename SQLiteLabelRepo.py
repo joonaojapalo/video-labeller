@@ -90,6 +90,7 @@ WHERE
 
 query_select_landmarks = "select name from landmarks;"
 
+
 class Marker (TypedDict):
     id: int
     subject_id: str
@@ -135,11 +136,29 @@ class SQLiteLabelRepo:
 
         return conn
 
+    def _landmark_cmp(self, lm: str) -> int:
+        """Custom comparator function.
+        """
+        order = [
+            "RShoulder",
+            "RElbow",
+            "RWrist",
+            "RMidFinger",
+            "LShoulder",
+            "LElbow",
+            "LWrist",
+            "LMidFinger",
+        ]
+
+        # order by the list 'order' otherwise keep last
+        return order.index(lm) if lm in order else len(order)
+
     def get_available_landmarks(self) -> List[str]:
         cur = self.conn.cursor()
         res = cur.execute(query_select_landmarks)
-        return [row["name"] for row in res.fetchall()]
-        
+        xs = [row["name"] for row in res.fetchall()]
+        return sorted(xs, key=self._landmark_cmp)        
+
     def get_frame(self, subject_id: str, trial_id: int, relative_frame: int) -> List[Marker]:
         cur = self.conn.cursor()
         params = (

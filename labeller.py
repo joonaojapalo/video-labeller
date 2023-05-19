@@ -1,6 +1,8 @@
+from collections import defaultdict
+import pprint
 import sys
 import argparse
-from typing import Dict
+from typing import Dict, List, Optional, TypedDict
 from matplotlib.lines import Line2D
 import matplotlib.pyplot as plt
 import json
@@ -16,10 +18,58 @@ def scale(ax, scale, center_x, center_y, ref_height=1080):
     ax.set_xlim(center_x - dx, center_x + dx)
 
 
+class FrameLookupEntry (TypedDict):
+    event: str
+    cam_id: str
+    rel_frame: int
+    abs_frame: int
+
+
+class FrameLookup:
+    def __init__(self, subject_id: str, trial_id: str, image_repo: ImageRepo) -> None:
+        self.lookup = self._build_lookup(image_repo,
+                                         subject_id,
+                                         trial_id)
+        self.reverse_lookup = self._build_lookup_relframe(image_repo,
+                                                          subject_id,
+                                                          trial_id)
+
+    def _build_lookup(self, repo: ImageRepo, subject_id, trial_id):
+        lookup = defaultdict(list)
+        for frame in repo.get_all_frames(subject_id, trial_id):
+            abs_frame = frame["frame"]
+            rel_frame = frame["rel_frame"]
+            event = frame["event_name"]
+            cam_id = frame["cam_id"]
+            lookup[abs_frame].append(FrameLookupEntry(event=event,
+                                                      cam_id=cam_id,
+                                                      rel_frame=rel_frame,
+                                                      abs_frame=abs_frame))
+        return lookup
+
+    def _build_lookup_relframe(self, repo: ImageRepo, subject_id, trial_id):
+        lookup = defaultdict(lambda: defaultdict(int))
+
+        for frame in repo.get_all_frames(subject_id, trial_id):
+            abs_frame = frame["frame"]
+            rel_frame = frame["rel_frame"]
+            event = frame["event_name"]
+            lookup[rel_frame][event] = abs_frame
+
+        return lookup
+
+    def by_frame(self, frame: int) -> List[FrameLookupEntry]:
+        return self.lookup.get(frame, [])
+
+    def by_relframe(self, event: str, rel_frame: int) -> int:
+        return self.reverse_lookup[rel_frame].get(event, None)
+
+
 class LabellerApp:
     is_drawing = False
     landmark_color_current = "y"
     landmark_color = "purple"
+    landmark_color_sibling = "gray"
 
     def __init__(self,
                  image_repo: ImageRepo,
@@ -28,6 +78,7 @@ class LabellerApp:
                  trial_id: int,
                  cam_ids=["oe", "ot"]) -> None:
         self.image_repo = image_repo
+        self.sibling_lookup = FrameLookup(subject_id, trial_id, image_repo)
         self.repo = repo
         self.subject_id = subject_id
         self.trial_id = trial_id
@@ -155,33 +206,51 @@ class LabellerApp:
         self._draw_frame()
         self.is_drawing = False
 
-    def _draw_initial_object(self, obj, color):
+    def _draw_initial_object(self, obj: Optional[Marker],
+                             color,
+                             linewidth=1.0,
+                             markersize=8):
+        style = {
+            "markersize": markersize,
+            "color": color,
+            "linewidth": linewidth,
+            "alpha": 0.8
+        }
+
         if obj:
-            return self.ax1.plot([obj["x"]], [obj["y"]], '+', color=color, markersize=10)[0]
+            return self.ax1.plot([obj["x"]], [obj["y"]], '+', **style)[0]
         else:
-            return self.ax1.plot([0, 0], 'y+', markersize=10)[0]
+            return self.ax1.plot([0, 0], '+', **style)[0]
 
     def _draw_initial_landmark_object(self) -> Dict[str, Line2D]:
         curr_lm = self._current_landmark()
-        objs = self._current_frame_objects()
+        frame_lms = self._current_frame_objects()
+        sibling_lms = self._sibling_frame_objects()
         artists = {}
 
         for lm in self.avail_landmarks:
-            obj = objs.get(lm)
+            frame_obj = frame_lms.get(lm)
+            sibling_obj = sibling_lms.get(lm)
 
             # choose marker color
             is_current = lm == curr_lm
             color = self.landmark_color_current if is_current else self.landmark_color
 
             # initial plot
-            artists[lm] = self._draw_initial_object(obj, color)
+            artists[lm] = self._draw_initial_object(frame_obj, color)
+            artists[f"prev-{lm}"] = self._draw_initial_object(sibling_obj,
+                                                              self.landmark_color_sibling,
+                                                              markersize=5)
+            artists[f"next-{lm}"] = self._draw_initial_object(sibling_obj,
+                                                              self.landmark_color_sibling,
+                                                              markersize=5)
 
         return artists
 
     def _draw_frame(self):
         current_lm = self._current_landmark()
-        objs = self._current_frame_objects()
-        print("_draw_frame", json.dumps(objs, indent=2))
+        frame_lms = self._current_frame_objects()
+        sibling_lms = self._sibling_frame_objects()
 
         # render
         self.load_image(*self._get_image_paths())
@@ -190,7 +259,8 @@ class LabellerApp:
         for artist in self.landmark_artists.values():
             artist.set_visible(False)
 
-        for lm, obj in objs.items():
+        # render frame markers
+        for lm, obj in frame_lms.items():
             artist = self.landmark_artists.get(lm)
 
             if not artist:
@@ -201,11 +271,24 @@ class LabellerApp:
 
             # is selected landmark?
             if lm == current_lm:
+                print("current frame_lm", lm)
                 artist.set_color(self.landmark_color_current)
             else:
                 artist.set_color(self.landmark_color)
-            print("Draw", lm)
 
+        # render sibling frame (prev and next) markers
+        for lm, obj in sibling_lms.items():
+            artist = self.landmark_artists.get(lm)
+            print("sibling lm", lm, obj["x"], obj["y"], obj["subject_id"],
+                  obj["event"], obj["relative_frame"], obj["cam_id"])
+
+            if not artist:
+                continue
+
+            artist.set_data([obj["x"], obj["y"]])
+            artist.set_visible(True)
+
+        # labels
         _cam_ids = self._current_cam_ids()
         self.ax1.set_xlabel(f"cam: {_cam_ids[0]}")
         self.ax2.set_xlabel(f"cam: {_cam_ids[1]}")
@@ -259,6 +342,62 @@ class LabellerApp:
 
     def _current_frame_objects(self) -> Dict[str, Marker]:
         return dict((obj["landmark"], obj) for obj in self.markers if self.match_frame(obj))
+
+    def _sibling_frame_objects(self) -> Dict[str, Marker]:
+        # find abs frame
+        curr_rel_frame = self._current_rel_frame()
+        event = self._current_event_name()
+        cam_id = self._current_cam_id()
+        landmark = self._current_landmark()
+        abs_frame = self.sibling_lookup.by_relframe(event, curr_rel_frame)
+
+        # find siblings
+        objs = {}
+
+        found = {
+            "prev": False,
+            "next": False
+        }
+
+        has_next = False
+
+        for prefix, sibling_frame in [("prev", -1), ("next", 1), ("prev", -2), ("next", 2)]:
+            # find by absolute frame
+            entries = self.sibling_lookup.by_frame(abs_frame + sibling_frame)
+
+            if not entries:
+                continue
+
+            if found[prefix]:
+                continue
+
+            found[prefix] = True
+
+            for entry in entries:
+#                print(" - current %i, entry frame %i, entry_rel: %s" % (abs_frame, entry["abs_frame"], entry["rel_frame"]))
+
+                # get frame markers
+                markers = self.repo.get_frame(
+                    self.subject_id,
+                    self.trial_id,
+                    entry["rel_frame"]
+                )
+
+                # add to lookup
+                for marker in markers:
+                    if marker["cam_id"] != cam_id:
+                        continue
+
+                    if marker["landmark"] != landmark:
+                        continue
+
+                    if marker["event"] != entry["event"]:
+                        continue
+
+                    key = f"{prefix}-{marker['landmark']}"
+                    objs[key] = marker
+
+        return objs
 
     def _set_marker(self, x, y):
         # get existing point id
@@ -333,7 +472,7 @@ class LabellerApp:
         i_cam = (self.i_cam + 1) % len(self.cam_ids)
         return (i_frame, i_event, i_kp, i_cam)
 
-    def has_frame(self, subject_id, trial_id, i_event, i_frame):
+    def has_frame(self, subject_id: str, trial_id: str, i_event: str, i_frame: int):
         # check if exists in image repo
         event_name = self.event_names[i_event]
         rel_frames = self.image_repo.get_rel_frames(
@@ -365,9 +504,10 @@ class LabellerApp:
         if i == limit:
             raise Exception("Next frame not found")
 
-        print(" * [next point] frame found", i_event,
-              self.event_names[i_event], i_frame)
-        # update point...
+        # log update point...
+        print(" * [next point] frame found, event: %s/%i, frame: %i" % (self.event_names[i_event],
+                                                                        i_event,
+                                                                        i_frame))
 
         # 1) progress frame
         self.i_frame = i_frame

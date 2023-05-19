@@ -1,33 +1,52 @@
 from pathlib import Path
 import csv
 from collections import defaultdict
+from typing import Dict, List, Optional, TypedDict
 
 import cv2
 
+class CsvFrame (TypedDict):
+    input_file: str
+    frame_file: str
+    subject_id: str
+    throw_id: str
+    cam_id: str
+    event_name: str
+    rel_frame: int
+    frame: int
 
 class Frame:
-    def __init__(self, rel_frame, subject_id, trial_id, paths_by_cam) -> None:
+    rel_frame: int
+    subject_id: str
+    trial_id: str
+    paths_by_cam: Dict[str, str]
+    absolute_frame: int
+
+    def __init__(self, rel_frame, subject_id, trial_id, paths_by_cam, absolute_frame) -> None:
         self.rel_frame = rel_frame
         self.subject_id = subject_id
         self.trial_id = trial_id
         self.paths_by_cam = paths_by_cam
+        self.absolute_frame = absolute_frame
 
     def get_image(self, cam_id):
         img_path = str(self.paths_by_cam[cam_id])
         return cv2.imread(img_path)
 
+BySubjectFrameLookup = Dict[str, Dict[str, Dict[str, List[CsvFrame]]]]
 
 class ImageRepo:
     def __init__(self, csv_path: str):
         self.csv_path = Path(csv_path)
         self.by_subject = self._read_subject_lookup(self.csv_path)
 
-    def _row_dict(self, head, row):
+    def _row_dict(self, head, row) -> CsvFrame:
         d = dict(zip(head, row))
         d["rel_frame"] = int(d["rel_frame"])
+        d["frame"] = int(d["frame"])
         return d
 
-    def _read_subject_lookup(self, csv_path):
+    def _read_subject_lookup(self, csv_path) -> BySubjectFrameLookup:
         reader = csv.reader(csv_path.open(), delimiter=";")
         head = next(reader)
 
@@ -70,13 +89,19 @@ class ImageRepo:
             "bltd",
             "release",
         ]
+        # order by the list 'order' otherwise keep last
         return order.index(event) if event in order else len(order)
 
-    def get_events(self, subject_id, trial_id) -> list:
+    def get_events(self, subject_id: str, trial_id: str) -> list:
         return sorted(self.by_subject[subject_id][trial_id].keys(),
                       key=self._event_key)
 
-    def get_rel_frames(self, subject_id, trial_id, event_name, cam_id=None) -> list:
+    def get_all_frames(self, subject_id, trial_id):
+        for frames in self.by_subject[subject_id][trial_id].values():
+            for frame in frames:
+                yield frame
+
+    def get_rel_frames(self, subject_id, trial_id, event_name, cam_id=None) -> List[Frame]:
         frames = self.by_subject[subject_id][trial_id][event_name]
 
         # pick default cam_id
@@ -96,7 +121,7 @@ class ImageRepo:
         else:
             return "0"
 
-    def get_frame(self, subject_id, trial_id, event_name, rel_frame) -> Frame:
+    def get_frame(self, subject_id, trial_id, event_name, rel_frame) -> Optional[Frame]:
         # find matching frame
         match = tuple(filter(
             lambda row: row["rel_frame"] == rel_frame,
@@ -118,4 +143,5 @@ class ImageRepo:
         return Frame(int(frame["rel_frame"]),
                      frame["subject_id"],
                      frame["throw_id"],
-                     paths_by_cam)
+                     paths_by_cam,
+                     frame["frame"])
