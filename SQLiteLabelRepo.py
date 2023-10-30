@@ -120,7 +120,8 @@ class SQLiteLabelRepo:
             self.conn = self._connect(dbpath)
 
     def __del__(self):
-        self.conn.close()
+        if hasattr(self, "conn"):
+            self.conn.close()
 
     def _connect(self, dbpath):
         conn = sqlite3.connect(

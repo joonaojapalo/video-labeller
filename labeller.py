@@ -64,6 +64,10 @@ class FrameLookup:
     def by_relframe(self, event: str, rel_frame: int) -> int:
         return self.reverse_lookup[rel_frame].get(event, None)
 
+class BitmapStore:
+    def __init__(self, repo: ImageRepo):
+        pass
+
 
 class LabellerApp:
     is_drawing = False
@@ -525,12 +529,12 @@ class LabellerApp:
         image2 = plt.imread(path2)
 
         if self.im1 is None:
-            self.im1 = self.ax1.imshow(image1)
+            self.im1 = self.ax1.imshow(image1, interpolation="none")
         else:
             self.im1.set_array(image1)
 
         if self.im2 is None:
-            self.im2 = self.ax2.imshow(image2)
+            self.im2 = self.ax2.imshow(image2, interpolation="none")
         else:
             self.im2.set_array(image2)
 

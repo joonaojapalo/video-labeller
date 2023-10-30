@@ -33,6 +33,9 @@ class Frame:
         img_path = str(self.paths_by_cam[cam_id])
         return cv2.imread(img_path)
 
+    def get_path_by_cam(self, cam_id: str):
+        return self.paths_by_cam.get(cam_id.lower())
+
 BySubjectFrameLookup = Dict[str, Dict[str, Dict[str, List[CsvFrame]]]]
 
 class ImageRepo:
@@ -134,7 +137,9 @@ class ImageRepo:
         paths_by_cam = {}
         for frame in match:
             rel_frame_str = self._format_rel_frame(rel_frame)
-            cam_id = frame["cam_id"]
+
+            # case-insensitive camera ids
+            cam_id = frame["cam_id"].lower()
             fname = f"{subject_id}_{trial_id}_{cam_id}_{event_name}_{rel_frame_str}.png"
             path = self.csv_path.parent.joinpath("frames").joinpath(fname)
             paths_by_cam[cam_id] = path
