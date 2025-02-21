@@ -5,6 +5,9 @@ from typing import Dict, List, Optional, TypedDict
 
 import cv2
 
+class MissingSubjectException (Exception):
+    pass
+
 class CsvFrame (TypedDict):
     input_file: str
     frame_file: str
@@ -96,6 +99,9 @@ class ImageRepo:
         return order.index(event) if event in order else len(order)
 
     def get_events(self, subject_id: str, trial_id: str) -> list:
+        if subject_id not in self.by_subject:
+            raise MissingSubjectException(subject_id)
+
         return sorted(self.by_subject[subject_id][trial_id].keys(),
                       key=self._event_key)
 
@@ -141,6 +147,7 @@ class ImageRepo:
             # case-insensitive camera ids
             cam_id = frame["cam_id"].lower()
             fname = f"{subject_id}_{trial_id}_{cam_id}_{event_name}_{rel_frame_str}.png"
+            print("opening",fname)
             path = self.csv_path.parent.joinpath("frames").joinpath(fname)
             paths_by_cam[cam_id] = path
 

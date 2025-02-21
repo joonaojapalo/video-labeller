@@ -88,6 +88,8 @@ class LabellerApp:
         self.trial_id = trial_id
         self.avail_landmarks = repo.get_available_landmarks()
 
+        print("Landmarks", self.avail_landmarks)
+
         # event names
         self.event_names = image_repo.get_events(subject_id, trial_id)
 
@@ -139,6 +141,9 @@ class LabellerApp:
         return f"{self.avail_landmarks[self.i_kp]} ({self.subject_id}/{self.trial_id}, {self._current_event_name()}, frame={self._current_rel_frame()})"
 
     def _current_event_name(self):
+        if self.i_event < 0 or self.i_event >= len(self.event_names):
+            raise Exception("Invalid event index %s. Available events: %s" % (self.i_event, ",".join(self.event_names)))
+
         return self.event_names[self.i_event]
 
     def _current_landmark(self) -> str:
@@ -560,7 +565,7 @@ if __name__ == "__main__":
     db_path = args.db
     frame_path = args.input
 
-    print(" * Opening frame image log: %s" % (input,))
+    print(" * Opening frame image log: %s" % (args.input,))
     image_repo = ImageRepo(frame_path)
     print(" * Opening label database: %s" % (db_path,))
     repo = SQLiteLabelRepo(db_path)
